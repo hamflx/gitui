@@ -178,7 +178,7 @@ impl Theme {
 	) -> Style {
 		let style = match typ {
 			DiffLineType::Add => {
-				Style::default().fg(self.diff_line_add)
+				Style::default().bg(self.diff_line_add)
 			}
 			DiffLineType::Delete => {
 				Style::default().fg(self.diff_line_delete)
@@ -337,7 +337,7 @@ impl Default for Theme {
 			cmdbar_bg: Color::Blue,
 			cmdbar_extra_lines_bg: Color::Blue,
 			disabled_fg: Color::DarkGray,
-			diff_line_add: Color::Green,
+			diff_line_add: Color::Rgb(0, 89, 38),
 			diff_line_delete: Color::Red,
 			diff_file_added: Color::LightGreen,
 			diff_file_removed: Color::LightRed,

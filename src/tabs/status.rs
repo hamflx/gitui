@@ -451,6 +451,13 @@ impl Status {
 		Ok(())
 	}
 
+	pub fn update_async(
+		&mut self,
+		ev: crate::AsyncNotification,
+	) -> Result<()> {
+		self.diff.update_async(ev)
+	}
+
 	pub fn get_files_changes(&self) -> Result<Vec<StatusItem>> {
 		Ok(self.git_status_stage.last()?.items)
 	}

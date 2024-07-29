@@ -3,7 +3,7 @@ mod scrollbar;
 mod scrolllist;
 mod stateful_paragraph;
 pub mod style;
-mod syntax_text;
+pub mod syntax_text;
 
 use filetreelist::MoveSelection;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};

@@ -9,19 +9,25 @@ use crate::{
 	keys::{key_match, SharedKeyConfig},
 	options::SharedOptions,
 	queue::{Action, InternalEvent, NeedsUpdate, Queue, ResetItem},
-	string_utils::tabs_to_spaces,
-	string_utils::trim_offset,
+	string_utils::{tabs_to_spaces, trim_offset},
 	strings, try_or_popup,
-	ui::style::SharedTheme,
+	ui::{
+		self, style::SharedTheme, syntax_text::syntact_style_to_tui,
+		AsyncSyntaxJob, SyntaxText,
+	},
+	AsyncAppNotification, AsyncNotification, SyntaxHighlightProgress,
 };
 use anyhow::Result;
 use asyncgit::{
+	asyncjob::AsyncSingleJob,
 	hash,
 	sync::{self, diff::DiffLinePosition, RepoPathRef},
 	DiffLine, DiffLineType, FileDiff,
 };
 use bytesize::ByteSize;
 use crossterm::event::Event;
+use itertools::Either;
+use log::{error, info};
 use ratatui::{
 	layout::Rect,
 	symbols,
@@ -119,6 +125,8 @@ pub struct DiffComponent {
 	key_config: SharedKeyConfig,
 	is_immutable: bool,
 	options: SharedOptions,
+	async_highlighting: AsyncSingleJob<AsyncSyntaxJob>,
+	current_file: Option<(String, Either<ui::SyntaxText, String>)>,
 }
 
 impl DiffComponent {
@@ -141,6 +149,10 @@ impl DiffComponent {
 			is_immutable,
 			repo: env.repo.clone(),
 			options: env.options.clone(),
+			async_highlighting: AsyncSingleJob::new(
+				env.sender_app.clone(),
+			),
+			current_file: None,
 		}
 	}
 	///
@@ -162,6 +174,41 @@ impl DiffComponent {
 		self.selected_hunk = None;
 		self.pending = pending;
 	}
+
+	pub fn update_async(
+		&mut self,
+		ev: AsyncNotification,
+	) -> Result<()> {
+		if let AsyncNotification::App(
+			AsyncAppNotification::SyntaxHighlighting(progress),
+		) = ev
+		{
+			match progress {
+				SyntaxHighlightProgress::Progress => {
+					// self.syntax_progress =
+					// 	self.async_highlighting.progress();
+				}
+				SyntaxHighlightProgress::Done => {
+					// self.syntax_progress = None;
+					if let Some(job) =
+						self.async_highlighting.take_last()
+					{
+						if let Some((path, content)) =
+							self.current_file.as_mut()
+						{
+							if let Some(syntax) = job.result() {
+								if syntax.path() == Path::new(path) {
+									*content = Either::Left(syntax);
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		Ok(())
+	}
+
 	///
 	pub fn update(
 		&mut self,
@@ -177,7 +224,7 @@ impl DiffComponent {
 			let reset_selection = self.current.path != path;
 
 			self.current = Current {
-				path,
+				path: path.clone(),
 				is_stage,
 				hash,
 			};
@@ -202,6 +249,33 @@ impl DiffComponent {
 					// selection.
 					len + 1
 				});
+
+			// match sync::tree_file_content(&self.repo.borrow(), file);
+			match std::fs::read_to_string(&path) {
+				Ok(wd_file) => {
+					info!("Read success: {path}");
+
+					let already_loaded =
+						self.current_file.as_ref().is_some_and(
+							|(current_file, _)| current_file == &path,
+						);
+					if !already_loaded {
+						let content = tabs_to_spaces(wd_file);
+						self.async_highlighting.spawn(
+							AsyncSyntaxJob::new(
+								content.clone(),
+								path.clone(),
+							),
+						);
+						self.current_file =
+							Some((path, Either::Right(content)));
+					}
+				}
+				Err(err) => error!("Read path {path} error: {err}"),
+			}
+			// syntax current file content
+			// syntax head file content
+			//
 
 			if reset_selection {
 				self.vertical_scroll.reset();
@@ -359,7 +433,14 @@ impl DiffComponent {
 							if line_cursor >= min
 								&& line_cursor <= max
 							{
+								let syntax_file = self
+									.current_file
+									.as_ref()
+									.and_then(|f| {
+										f.1.as_ref().left()
+									});
 								res.push(Self::get_line_to_add(
+									syntax_file,
 									width,
 									line,
 									self.focused()
@@ -422,6 +503,7 @@ impl DiffComponent {
 	}
 
 	fn get_line_to_add<'a>(
+		syntax: Option<&SyntaxText>,
 		width: u16,
 		line: &'a DiffLine,
 		selected: bool,
@@ -465,6 +547,109 @@ impl DiffComponent {
 			// weird eof missing eol line
 			format!("{content}\n")
 		};
+
+		match line.line_type {
+			DiffLineType::None => {}
+			DiffLineType::Header => {}
+			DiffLineType::Add => {
+				match syntax {
+					Some(syntax) => {
+						match syntax
+							.lines
+							.iter()
+							.skip(
+								line.position
+									.new_lineno
+									.unwrap_or_default()
+									.saturating_sub(1) as _,
+							)
+							.next()
+						{
+							Some(syntax_line) => {
+								info!(
+									"line content: {}",
+									line.content
+								);
+								let mut line_span: Line =
+									Vec::with_capacity(
+										syntax_line.items.len() + 1,
+									)
+									.into();
+								line_span
+									.spans
+									.push(left_side_of_line);
+								let line_content = tabs_to_spaces(
+									line.content.to_string(),
+								);
+								for (style, _, range) in
+									&syntax_line.items
+								{
+									info!("range: {:?}", range);
+
+									let item_content =
+										&line_content[range.clone()];
+									let item_style =
+										syntact_style_to_tui(&style);
+
+									// theme.diff_line(
+									// 	line.line_type,
+									// 	selected,
+									// );
+									line_span.spans.push(
+										Span::styled(
+											item_content.to_string(),
+											theme
+												.diff_line(
+													line.line_type,
+													selected,
+												)
+												.patch(item_style),
+										),
+									);
+								}
+								return line_span;
+							}
+							None => {}
+						};
+						// return Line::from(vec![
+						// 	left_side_of_line,
+						// 	Span::styled(
+						// 		Cow::from(filled),
+						// 		theme.diff_line(
+						// 			line.line_type,
+						// 			selected,
+						// 		),
+						// 	),
+						// ]);
+
+						// let mut result_lines: Vec<Line> =
+						// 	Vec::with_capacity(v.lines.len());
+
+						// for (syntax_line, line_content) in
+						// 	v.lines.iter().zip(v.text.lines())
+						// {
+						// 	let mut line_span: Line =
+						// 		Vec::with_capacity(syntax_line.items.len()).into();
+
+						// 	for (style, _, range) in &syntax_line.items {
+						// 		let item_content = &line_content[range.clone()];
+						// 		let item_style = syntact_style_to_tui(style);
+
+						// 		line_span
+						// 			.spans
+						// 			.push(Span::styled(item_content, item_style));
+						// 	}
+
+						// 	result_lines.push(line_span);
+						// }
+
+						// result_lines.into()
+					}
+					None => {}
+				}
+			}
+			DiffLineType::Delete => {}
+		}
 
 		Line::from(vec![
 			left_side_of_line,
@@ -965,6 +1150,7 @@ mod tests {
 
 			assert_eq!(
 				DiffComponent::get_line_to_add(
+					None,
 					4,
 					&diff_line,
 					false,
@@ -1002,7 +1188,8 @@ mod tests {
 
 			assert_eq!(
 				DiffComponent::get_line_to_add(
-					4, &diff_line, false, false, false, &theme, 0
+					None, 4, &diff_line, false, false, false, &theme,
+					0
 				)
 				.spans
 				.last()

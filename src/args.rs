@@ -129,7 +129,7 @@ fn setup_logging() -> Result<()> {
 	println!("Logging enabled. log written to: {path:?}");
 
 	WriteLogger::init(
-		LevelFilter::Trace,
+		LevelFilter::Debug,
 		Config::default(),
 		File::create(path)?,
 	)?;

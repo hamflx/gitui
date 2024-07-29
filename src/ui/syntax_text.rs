@@ -22,13 +22,13 @@ use syntect::{
 
 use crate::{AsyncAppNotification, SyntaxHighlightProgress};
 
-struct SyntaxLine {
-	items: Vec<(Style, usize, Range<usize>)>,
+pub struct SyntaxLine {
+	pub items: Vec<(Style, usize, Range<usize>)>,
 }
 
 pub struct SyntaxText {
 	text: String,
-	lines: Vec<SyntaxLine>,
+	pub lines: Vec<SyntaxLine>,
 	path: PathBuf,
 }
 
@@ -189,7 +189,7 @@ impl<'a> From<&'a SyntaxText> for ratatui::text::Text<'a> {
 	}
 }
 
-fn syntact_style_to_tui(style: &Style) -> ratatui::style::Style {
+pub fn syntact_style_to_tui(style: &Style) -> ratatui::style::Style {
 	let mut res = ratatui::style::Style::default().fg(
 		ratatui::style::Color::Rgb(
 			style.foreground.r,
