@@ -36,6 +36,8 @@ use ratatui::{
 	Frame,
 };
 use std::{borrow::Cow, cell::Cell, cmp, path::Path};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 #[derive(Default)]
 struct Current {
@@ -502,6 +504,18 @@ impl DiffComponent {
 		])]
 	}
 
+	// fn get_syntax_highlight_line<'a>(
+	// 	syntax: Option<&SyntaxText>,
+	// 	width: u16,
+	// 	line: &'a DiffLine,
+	// 	selected: bool,
+	// 	selected_hunk: bool,
+	// 	end_of_hunk: bool,
+	// 	theme: &SharedTheme,
+	// 	scrolled_right: usize,
+	// ) -> Line<'a> {
+	// }
+
 	fn get_line_to_add<'a>(
 		syntax: Option<&SyntaxText>,
 		width: u16,
@@ -540,115 +554,73 @@ impl DiffComponent {
 			};
 		let content = trim_offset(&content, scrolled_right);
 
-		let filled = if selected {
-			// selected line
-			format!("{content:w$}\n", w = width as usize)
-		} else {
-			// weird eof missing eol line
-			format!("{content}\n")
-		};
+		// weird eof missing eol line
+		let filled = format!("{content:w$}\n", w = width as usize);
 
-		match line.line_type {
-			DiffLineType::None => {}
-			DiffLineType::Header => {}
-			DiffLineType::Add => {
-				match syntax {
-					Some(syntax) => {
-						match syntax
-							.lines
-							.iter()
-							.skip(
-								line.position
-									.new_lineno
-									.unwrap_or_default()
-									.saturating_sub(1) as _,
-							)
-							.next()
-						{
-							Some(syntax_line) => {
-								info!(
-									"line content: {}",
-									line.content
-								);
-								let mut line_span: Line =
-									Vec::with_capacity(
-										syntax_line.items.len() + 1,
+		// 语法高亮，当然 add，remove 和 common 都要有。
+
+		match (line.line_type, line.position.new_lineno) {
+			(DiffLineType::Header, _) => {}
+			(
+				DiffLineType::None | DiffLineType::Add,
+				Some(lineno),
+			) => {
+				let line_index = lineno.saturating_sub(1);
+				match syntax
+					.and_then(|s| s.lines.get(line_index as usize))
+				{
+					Some(syntax_line) => {
+						info!("line content: {}", line.content);
+						// format
+						let mut line_span: Line = Vec::with_capacity(
+							syntax_line.items.len() + 1,
+						)
+						.into();
+						line_span.spans.push(left_side_of_line);
+						let line_content =
+							tabs_to_spaces(line.content.to_string());
+						let mut char_count = 0;
+						for (style, _, range) in &syntax_line.items {
+							info!("range: {:?}", range);
+
+							let item_content =
+								&line_content[range.clone()];
+							// char_count += item_content.len();
+
+							char_count +=
+								UnicodeSegmentation::graphemes(
+									item_content,
+									true,
+								)
+								.map(|c| c.width())
+								.sum::<usize>();
+
+							let item_style =
+								syntact_style_to_tui(&style);
+
+							line_span.spans.push(Span::styled(
+								item_content.to_string(),
+								theme
+									.diff_line(
+										line.line_type,
+										selected,
 									)
-									.into();
-								line_span
-									.spans
-									.push(left_side_of_line);
-								let line_content = tabs_to_spaces(
-									line.content.to_string(),
-								);
-								for (style, _, range) in
-									&syntax_line.items
-								{
-									info!("range: {:?}", range);
-
-									let item_content =
-										&line_content[range.clone()];
-									let item_style =
-										syntact_style_to_tui(&style);
-
-									// theme.diff_line(
-									// 	line.line_type,
-									// 	selected,
-									// );
-									line_span.spans.push(
-										Span::styled(
-											item_content.to_string(),
-											theme
-												.diff_line(
-													line.line_type,
-													selected,
-												)
-												.patch(item_style),
-										),
-									);
-								}
-								return line_span;
-							}
-							None => {}
-						};
-						// return Line::from(vec![
-						// 	left_side_of_line,
-						// 	Span::styled(
-						// 		Cow::from(filled),
-						// 		theme.diff_line(
-						// 			line.line_type,
-						// 			selected,
-						// 		),
-						// 	),
-						// ]);
-
-						// let mut result_lines: Vec<Line> =
-						// 	Vec::with_capacity(v.lines.len());
-
-						// for (syntax_line, line_content) in
-						// 	v.lines.iter().zip(v.text.lines())
-						// {
-						// 	let mut line_span: Line =
-						// 		Vec::with_capacity(syntax_line.items.len()).into();
-
-						// 	for (style, _, range) in &syntax_line.items {
-						// 		let item_content = &line_content[range.clone()];
-						// 		let item_style = syntact_style_to_tui(style);
-
-						// 		line_span
-						// 			.spans
-						// 			.push(Span::styled(item_content, item_style));
-						// 	}
-
-						// 	result_lines.push(line_span);
-						// }
-
-						// result_lines.into()
+									.patch(item_style),
+							));
+						}
+						let spaces =
+							width.saturating_sub(char_count as _);
+						line_span.spans.push(Span::styled(
+							" ".repeat(spaces as _),
+							theme.diff_line(line.line_type, selected),
+						));
+						return line_span;
 					}
 					None => {}
 				}
 			}
-			DiffLineType::Delete => {}
+			(DiffLineType::Delete, _) => {}
+			_ => {}
 		}
 
 		Line::from(vec![

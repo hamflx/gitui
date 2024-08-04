@@ -130,6 +130,10 @@ pub struct FileDiff {
 	pub sizes: (u64, u64),
 	/// size delta in bytes
 	pub size_delta: i64,
+	/// the content of old file
+	pub old_file_content: Option<String>,
+	/// the content of new file
+	pub new_file_content: Option<String>,
 }
 
 /// see <https://libgit2.org/libgit2/#HEAD/type/git_diff_options>
